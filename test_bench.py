@@ -20,7 +20,7 @@ def load_training_data(dir_path="./find_phone/"):
     return data, labels
 
 
-def create_csv_output():
+def create_record_df():
 
     img_dir = './find_phone/'
     data, labels = load_training_data(img_dir)
@@ -36,6 +36,13 @@ def create_csv_output():
         df.iloc[i] = np.array([h, w, filename, pt1[0], pt1[1], pt2[0], pt2[1], "phone"])
     return df
 
+def create_label_map(ids, names, filename):
+    pbtxt = open('./data/{}.pbtxt'.format(filename), 'w')
+    for id, name in zip(ids, names):
+        pbtxt.write('{\n')
+        pbtxt.write('\tid: {}\n'.format(id))
+        pbtxt.write('\tname: {}\n'.format(name))
+        pbtxt.write('}\n')
 
 def create_tf_example(img_dir, example):
 
@@ -73,10 +80,12 @@ def create_tf_example(img_dir, example):
 
 
 def main(_):
-    writer = tf.python_io.TFRecordWriter('./data/phone.record')
+    writer = tf.python_io.TFRecordWriter('./data/phone_finder.record')
 
     img_dir = './find_phone/'
-    examples = create_csv_output()
+    create_label_map([1], ['Phone'], 'phone_finder')
+    examples = create_record_df()
+
     for i in range(examples.shape[0]):
         example = examples.iloc[i]
         tf_example = create_tf_example(img_dir, example)
