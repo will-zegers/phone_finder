@@ -1,4 +1,6 @@
 .idea
-test_bench.py
 find_phone/
+object_detection/
+slim/
+data/
 *.p
