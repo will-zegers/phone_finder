@@ -3,6 +3,7 @@ import sys
 import pickle
 import numpy as np
 from scipy.stats import norm
+from sklearn.model_selection import KFold
 
 
 class PhoneFinder:
@@ -101,13 +102,17 @@ def calculate_error(prediction, labels):
 
 if __name__ == "__main__":
     training_dir = "./find_phone/"  # sys.argv[1]
-    train_data, labels = load_training_data(training_dir)
+    data, labels = load_training_data(training_dir)
 
-    phone_finder = PhoneFinder()
-    phone_finder.fit(train_data, labels)
-    pickle.dump(phone_finder, open("phone_finder.p", "wb"))
+    kf = KFold(n_splits=10, random_state=451)
+    scores = np.array((0, 1))
+    for train_index, valid_index in kf.split(data):
+        phone_finder = PhoneFinder()
+        phone_finder.fit(data, labels)
+        pickle.dump(phone_finder, open("phone_finder.p", "wb"))
 
-    # phone_finder.predict(samples[valid_index])
+        phone_finder.predict(data[valid_index])
 
-    # score = calculate_error(phone_finder.prediction, labels[valid_index])
-    # print("Error: {}".format(1 - score.mean()))
+        score = calculate_error(phone_finder.prediction, labels[valid_index])
+        scores = np.append(scores, score)
+    print("Error: {}".format(1 - scores.mean()))

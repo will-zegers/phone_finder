@@ -1,5 +1,6 @@
 .idea
 find_phone/
+phone_finder_env/
 object_detection/
 slim/
 *.p
