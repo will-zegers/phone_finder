@@ -31,8 +31,8 @@ def create_record_df():
     for i, (filename, center) in enumerate(zip(data, labels)):
         img = cv2.imread(os.path.join(img_dir, filename))
         h, w, _ = img.shape
-        pt1 = (round(center[0] - box_size, 4), round(center[1] - box_size), 4)
-        pt2 = (round(center[0] + box_size, 4), round(center[1] + box_size), 4)
+        pt1 = (round(center[0] - box_size, 4), round(center[1] - box_size, 4))
+        pt2 = (round(center[0] + box_size, 4), round(center[1] + box_size, 4))
         df.iloc[i] = np.array([h, w, filename, pt1[0], pt1[1], pt2[0], pt2[1], "phone"])
     return df
 
