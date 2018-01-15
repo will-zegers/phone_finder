@@ -104,7 +104,7 @@ if __name__ == "__main__":
     training_dir = "./find_phone/"  # sys.argv[1]
     data, labels = load_training_data(training_dir)
 
-    kf = KFold(n_splits=10, random_state=451)
+    kf = KFold(n_splits=10, random_state=451, shuffle=True)
     scores = np.array((0, 1))
     for train_index, valid_index in kf.split(data):
         phone_finder = PhoneFinder()
