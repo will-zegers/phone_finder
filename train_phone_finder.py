@@ -1,27 +1,38 @@
 import os
 import cv2
 import sys
+import platform
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 from sklearn.model_selection import KFold
 
+"""
+For the object detection API, we need to include the path of the local installation of the
+library and a helper TF "slim" library, and also make sure the .proto files have been
+compiled in a way that can be used by Python
+"""
 sys.path.append(os.getcwd())
 sys.path.append(os.getcwd() + '/slim')
 if not os.path.exists('./object_detection/protos/eval_pb2.py'):
     print('Compiling proto files...')
-    os.system('./protoc/bin/protoc object_detection/protos/*.proto --python_out=.')
-else:
-    print('Doing nothing')
+    if platform.system() == 'Linux':
+        if platform.architecture()[0] == '64bit':
+            os.system('./protoc/bin/protoc object_detection/protos/*.proto --python_out=.')
 
 from object_detection import train as od_train
 from object_detection.utils import dataset_util
 
 
-def load_training_data(dir_path="./find_phone/"):
+def load_training_data(dir_path='./find_phone/'):
+    """
+    :param dir_path: Location of the directory containing the training examples and labels
+    :return: Two arrays, one containing the strings of file name (data), and the other containing
+    the corresponding labels the indicate the center XY coordinate of the phone
+    """
     data = np.empty(0)
     labels = np.empty((0, 2))
-    with open(os.path.join(dir_path, "labels.txt")) as f:
+    with open(os.path.join(dir_path, 'labels.txt')) as f:
         line = f.readline()
         while line:
             label = line.split()
@@ -31,49 +42,75 @@ def load_training_data(dir_path="./find_phone/"):
     return data, labels
 
 
-def create_record_df():
+def create_record_df(img_dir, box_size=0.06):
+    """
+    Compiles a Pandas dataframe containing relevant information of images and the location
+    of the phone in each.
 
-    img_dir = './find_phone/'
+    :param img_dir: Location of the directory containing the training examples and labels
+    :param box_size: Normalized size of the box in which the image of the phone will be contained
+    :return: A Pandas dataframe, where each entry contains the height, width, and filename of an
+    image in the training set, plus the normalized points of the box that contains the phone image
+    (represented by its top right corner and bottom left)
+    """
     data, labels = load_training_data(img_dir)
 
-    box_size = 0.06
-    columns=['height', 'width', 'filename', 'xmin', 'ymin', 'xmax', 'ymax', 'class']
+    columns = ['height', 'width', 'filename', 'xmin', 'ymin', 'xmax', 'ymax', 'class']
     df = pd.DataFrame(index=[i for i in range(len(data))], columns=columns)
     for i, (filename, center) in enumerate(zip(data, labels)):
         img = cv2.imread(os.path.join(img_dir, filename))
         h, w, _ = img.shape
         pt1 = (round(center[0] - box_size, 4), round(center[1] - box_size, 4))
         pt2 = (round(center[0] + box_size, 4), round(center[1] + box_size, 4))
-        df.iloc[i] = np.array([h, w, filename, pt1[0], pt1[1], pt2[0], pt2[1], "phone"])
+        df.iloc[i] = np.array([h, w, filename, pt1[0], pt1[1], pt2[0], pt2[1], 'phone'])
     return df
 
-def create_label_map(ids, names, filename):
+
+def create_label_map(names, filename):
+    """
+    A mapping used by the TensorFlow object detection, associating class names with a corresponding
+    id (in this case, we just have a single 'phone' class
+
+    :param names: Class names (phone)
+    :param filename: location of where to save the .pbtxt file
+    :return: None
+    """
     pbtxt = open('./data/{}.pbtxt'.format(filename), 'w')
-    for id, name in zip(ids, names):
+    for class_id, name in enumerate(names):
         pbtxt.write('{\n')
-        pbtxt.write('\tid: {}\n'.format(id))
+        pbtxt.write('\tid: {}\n'.format(class_id))
         pbtxt.write('\tname: {}\n'.format(name))
         pbtxt.write('}\n')
 
-def create_tf_example(img_dir, example):
 
-    with tf.gfile.GFile(os.path.join(img_dir, example['filename']), 'rb') as fid:
+def create_tf_record(img_dir, sample):
+    """
+    Mostly copy and pasted from https://git.io/vNWx2. This takes in a Pandas dataframe entry and
+    converts it to the TFRecord format that can be used by Tensorflow
+
+    :param img_dir: Location of the directory containing the training examples and labels
+    :param sample: A single row of a Pandas dataframe, containing all necessary fields needed
+    by the TensorFlow object detection API
+    :return: An TF record object
+    """
+
+    with tf.gfile.GFile(os.path.join(img_dir, sample['filename']), 'rb') as fid:
         encoded_image_data = fid.read()
-    height = int(example['height'])
-    width = int(example['width'])
-    filename = example['filename']
+    height = int(sample['height'])
+    width = int(sample['width'])
+    filename = sample['filename']
     image_format = b'jpg'
 
-    xmins = [float(example['xmin'])]
-    xmaxs = [float(example['xmax'])]
+    xmins = [float(sample['xmin'])]
+    xmaxs = [float(sample['xmax'])]
 
-    ymins = [float(example['ymin'])]
-    ymaxs = [float(example['ymax'])]
+    ymins = [float(sample['ymin'])]
+    ymaxs = [float(sample['ymax'])]
 
-    classes_text = [example['class']]
+    classes_text = [sample['class']]
     classes = [1]
 
-    tf_example = tf.train.Example(features=tf.train.Features(feature={
+    return tf.train.Example(features=tf.train.Features(feature={
         'image/height': dataset_util.int64_feature(height),
         'image/width': dataset_util.int64_feature(width),
         'image/filename': dataset_util.bytes_feature(filename),
@@ -87,34 +124,45 @@ def create_tf_example(img_dir, example):
         'image/object/class/text': dataset_util.bytes_list_feature(classes_text),
         'image/object/class/label': dataset_util.int64_list_feature(classes),
     }))
-    return tf_example
 
-def main(_):
 
+def write_tf_records(img_dir, data, n_splits=5, random_state=451):
+    """
+    Splits a Pandas dataframe into a training and validation set, and writes it out to a
+    TF record file, for use in the TF object detection API
+
+    :param img_dir: Location of the directory containing the training examples and labels
+    :param data: A Pandas dataframe containing information pertaining to the training data
+    :param n_splits: Number of splits to use in creating the training and validation sets
+    :param random_state: Seed for the KFold split
+    :return: None
+    """
     train_writer = tf.python_io.TFRecordWriter('./data/phone_finder_train.record')
     valid_writer = tf.python_io.TFRecordWriter('./data/phone_finder_valid.record')
 
-    img_dir = './find_phone/'
-    create_label_map([1], ['Phone'], 'phone_finder')
-    examples = create_record_df()
+    kf = KFold(n_splits=n_splits, random_state=random_state, shuffle=True)
+    train_idx, valid_idx = next(kf.split([i for i in range(data.shape[0])]))
+    for i in range(data.shape[0]):
+        tf_example = create_tf_record(img_dir, data.iloc[i])
 
-    kf = KFold(n_splits=5, random_state=451, shuffle=True)
-    train_idx, valid_idx = next(kf.split([i for i in range(examples.shape[0])]))
-    for i in range(examples.shape[0]):
-        example = examples.iloc[i]
-        tf_example = create_tf_example(img_dir, example)
-        if i in train_idx:
-            train_writer.write(tf_example.SerializeToString())
-        else:
-            valid_writer.write(tf_example.SerializeToString())
+        writer = valid_writer if i in valid_idx else train_writer
+        writer.write(tf_example.SerializeToString())
 
     train_writer.close()
     valid_writer.close()
 
-    #od_train.FLAGS.train_dir = 'data/'
-    #od_train.FLAGS.pipeline_config_path = 'data/pipeline.config'
-    #od_train.main(0)
+
+
+def main(_):
+    img_dir = './find_phone/'
+    create_label_map(['Phone'], 'phone_finder')
+    data = create_record_df(img_dir)
+    write_tf_records(img_dir, data)
+
+    od_train.FLAGS.train_dir = 'data/'
+    od_train.FLAGS.pipeline_config_path = 'data/pipeline.config'
+    od_train.main(0)
 
 
 if __name__ == '__main__':
-  tf.app.run()
+    tf.app.run()
