@@ -3,6 +3,7 @@ import os
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from sklearn.model_selection import KFold
 
 from object_detection.utils import dataset_util
 
@@ -80,18 +81,27 @@ def create_tf_example(img_dir, example):
 
 
 def main(_):
-    writer = tf.python_io.TFRecordWriter('./data/phone_finder.record')
+    train_writer = tf.python_io.TFRecordWriter('./data/phone_finder_train.record')
+    valid_writer = tf.python_io.TFRecordWriter('./data/phone_finder_valid.record')
 
     img_dir = './find_phone/'
     create_label_map([1], ['Phone'], 'phone_finder')
     examples = create_record_df()
 
+    kf = KFold(n_splits=5, random_state=451, shuffle=True)
+    train_idx, valid_idx = next(kf.split([i for i in range(examples.shape[0])]))
+    print(len(train_idx), len(valid_idx))
     for i in range(examples.shape[0]):
         example = examples.iloc[i]
         tf_example = create_tf_example(img_dir, example)
-        writer.write(tf_example.SerializeToString())
+        if i in train_idx:
+            train_writer.write(tf_example.SerializeToString())
+        else:
+            valid_writer.write(tf_example.SerializeToString())
 
-    writer.close()
+    train_writer.close()
+    valid_writer.close()
+
 
 if __name__ == '__main__':
   tf.app.run()
