@@ -1,118 +1,120 @@
+import os
 import cv2
 import sys
-import pickle
 import numpy as np
-from scipy.stats import norm
+import pandas as pd
+import tensorflow as tf
 from sklearn.model_selection import KFold
 
+sys.path.append(os.getcwd())
+sys.path.append(os.getcwd() + '/slim')
+if not os.path.exists('./object_detection/protos/eval_pb2.py'):
+    print('Compiling proto files...')
+    os.system('./protoc/bin/protoc object_detection/protos/*.proto --python_out=.')
+else:
+    print('Doing nothing')
 
-class PhoneFinder:
-    def __init__(self, base_threshold=60, threshold_step=10, kernel_size=8):
-        self.base_thresh = base_threshold
-        self.thresh_step = threshold_step
-        self.k_size = kernel_size
-        self.prediction = np.empty(0)
-        self.model = None
-
-    def fit(self, training_data, labels):
-        aspect_ratios = np.empty((len(training_data), 1))
-        for i, sample in enumerate(training_data):
-            img = cv2.imread(training_dir+sample, cv2.IMREAD_GRAYSCALE)
-            phone_contour = self._find_phone_contour_from_label(img, labels[i])
-            aspect_ratios[i] = phone_contour.get_aspect_ratio()
-
-        self.model = norm(aspect_ratios.mean(), aspect_ratios.std())
-
-    def predict(self, test_data):
-        self.prediction = np.empty((len(test_data), 2))
-        for i, sample in enumerate(test_data):
-            img = cv2.imread(training_dir+sample, cv2.IMREAD_GRAYSCALE)
-            for th in range(self.base_thresh, 256, self.thresh_step):
-                contours = [Contour(p) for p in self._get_image_contours(img, th)]
-                if len(contours) > 0:
-                    break
-
-            aspect_ratios = np.array([c.get_aspect_ratio() for c in contours])
-
-            phone_score = self.model.pdf(aspect_ratios)
-            guess = contours[phone_score.argmax()]
-            guess.scale_center(*img.shape)
-            self.prediction[i] = guess.center
-
-    def _find_phone_contour_from_label(self, img, label):
-        for th in range(self.base_thresh, 256, self.thresh_step):
-            contours = [Contour(p) for p in self._get_image_contours(img, thresh=th)]
-            if len(contours) == 0:
-                continue
-
-            center_xy = (img.shape[1]*label[0], img.shape[0]*label[1])
-            for contour in contours:
-                if contour.contains_point(center_xy):
-                    return contour
-        return None
-
-    def _get_image_contours(self, img, thresh=60):
-        kernel = np.ones((self.k_size, self.k_size), np.uint8)
-        _, bin_img = cv2.threshold(img, thresh, 255, cv2.THRESH_BINARY_INV)
-        morph = cv2.morphologyEx(bin_img, cv2.MORPH_OPEN, kernel)
-        return cv2.findContours(morph, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[1]
-
-
-class Contour:
-    def __init__(self, points):
-        self.points = points
-        self.center = self._compute_center()
-
-    def scale_center(self, m, n):
-        self.center = (self.center[0] / n, self.center[1] / m)
-
-    def contains_point(self, point):
-        return cv2.pointPolygonTest(self.points, point, False) == 1
-
-    def get_aspect_ratio(self):
-        rect = cv2.minAreaRect(self.points)[1]
-        if rect[0] == 0 or rect[1] == 0:
-            return 0
-        return rect[0] / rect[1] if rect[0] > rect[1] else rect[1] / rect[0]
-
-    def _compute_center(self):
-        M = cv2.moments(self.points)
-        cx = M['m10'] / (M['m00'] + 1e-6)  # To prevent division by zero
-        cy = M['m01'] / (M['m00'] + 1e-6)
-        return cx, cy
+from object_detection import train as od_train
+from object_detection.utils import dataset_util
 
 
 def load_training_data(dir_path="./find_phone/"):
-    samples = np.empty(0)
+    data = np.empty(0)
     labels = np.empty((0, 2))
-    with open(dir_path+"labels.txt") as f:
+    with open(os.path.join(dir_path, "labels.txt")) as f:
         line = f.readline()
         while line:
             label = line.split()
-            samples = np.append(samples, label[0])
+            data = np.append(data, label[0])
             labels = np.vstack((labels, (float(label[1]), float(label[2]))))
             line = f.readline()
-    return samples, labels
+    return data, labels
 
 
-def calculate_error(prediction, labels):
-        score = np.all(abs(prediction - labels) < 0.05, axis=1).sum(dtype='float')
-        return score / len(prediction)
+def create_record_df():
+
+    img_dir = './find_phone/'
+    data, labels = load_training_data(img_dir)
+
+    box_size = 0.06
+    columns=['height', 'width', 'filename', 'xmin', 'ymin', 'xmax', 'ymax', 'class']
+    df = pd.DataFrame(index=[i for i in range(len(data))], columns=columns)
+    for i, (filename, center) in enumerate(zip(data, labels)):
+        img = cv2.imread(os.path.join(img_dir, filename))
+        h, w, _ = img.shape
+        pt1 = (round(center[0] - box_size, 4), round(center[1] - box_size, 4))
+        pt2 = (round(center[0] + box_size, 4), round(center[1] + box_size, 4))
+        df.iloc[i] = np.array([h, w, filename, pt1[0], pt1[1], pt2[0], pt2[1], "phone"])
+    return df
+
+def create_label_map(ids, names, filename):
+    pbtxt = open('./data/{}.pbtxt'.format(filename), 'w')
+    for id, name in zip(ids, names):
+        pbtxt.write('{\n')
+        pbtxt.write('\tid: {}\n'.format(id))
+        pbtxt.write('\tname: {}\n'.format(name))
+        pbtxt.write('}\n')
+
+def create_tf_example(img_dir, example):
+
+    with tf.gfile.GFile(os.path.join(img_dir, example['filename']), 'rb') as fid:
+        encoded_image_data = fid.read()
+    height = int(example['height'])
+    width = int(example['width'])
+    filename = example['filename']
+    image_format = b'jpg'
+
+    xmins = [float(example['xmin'])]
+    xmaxs = [float(example['xmax'])]
+
+    ymins = [float(example['ymin'])]
+    ymaxs = [float(example['ymax'])]
+
+    classes_text = [example['class']]
+    classes = [1]
+
+    tf_example = tf.train.Example(features=tf.train.Features(feature={
+        'image/height': dataset_util.int64_feature(height),
+        'image/width': dataset_util.int64_feature(width),
+        'image/filename': dataset_util.bytes_feature(filename),
+        'image/source_id': dataset_util.bytes_feature(filename),
+        'image/encoded': dataset_util.bytes_feature(encoded_image_data),
+        'image/format': dataset_util.bytes_feature(image_format),
+        'image/object/bbox/xmin': dataset_util.float_list_feature(xmins),
+        'image/object/bbox/xmax': dataset_util.float_list_feature(xmaxs),
+        'image/object/bbox/ymin': dataset_util.float_list_feature(ymins),
+        'image/object/bbox/ymax': dataset_util.float_list_feature(ymaxs),
+        'image/object/class/text': dataset_util.bytes_list_feature(classes_text),
+        'image/object/class/label': dataset_util.int64_list_feature(classes),
+    }))
+    return tf_example
+
+def main(_):
+
+    train_writer = tf.python_io.TFRecordWriter('./data/phone_finder_train.record')
+    valid_writer = tf.python_io.TFRecordWriter('./data/phone_finder_valid.record')
+
+    img_dir = './find_phone/'
+    create_label_map([1], ['Phone'], 'phone_finder')
+    examples = create_record_df()
+
+    kf = KFold(n_splits=5, random_state=451, shuffle=True)
+    train_idx, valid_idx = next(kf.split([i for i in range(examples.shape[0])]))
+    for i in range(examples.shape[0]):
+        example = examples.iloc[i]
+        tf_example = create_tf_example(img_dir, example)
+        if i in train_idx:
+            train_writer.write(tf_example.SerializeToString())
+        else:
+            valid_writer.write(tf_example.SerializeToString())
+
+    train_writer.close()
+    valid_writer.close()
+
+    #od_train.FLAGS.train_dir = 'data/'
+    #od_train.FLAGS.pipeline_config_path = 'data/pipeline.config'
+    #od_train.main(0)
 
 
-if __name__ == "__main__":
-    training_dir = "./find_phone/"  # sys.argv[1]
-    data, labels = load_training_data(training_dir)
-
-    kf = KFold(n_splits=10, random_state=451, shuffle=True)
-    scores = np.array((0, 1))
-    for train_index, valid_index in kf.split(data):
-        phone_finder = PhoneFinder()
-        phone_finder.fit(data, labels)
-        pickle.dump(phone_finder, open("phone_finder.p", "wb"))
-
-        phone_finder.predict(data[valid_index])
-
-        score = calculate_error(phone_finder.prediction, labels[valid_index])
-        scores = np.append(scores, score)
-    print("Error: {}".format(1 - scores.mean()))
+if __name__ == '__main__':
+  tf.app.run()

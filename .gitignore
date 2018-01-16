@@ -3,4 +3,5 @@ find_phone/
 phone_finder_env/
 data/*.record
 data/*.pbtxt
+*.pyc
 *.p
