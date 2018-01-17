@@ -66,7 +66,6 @@ def create_tf_record(img_dir, sample):
     :return: An TF record object
     """
 
-    print(sample['filename'])
     with tf.gfile.GFile(sample['filename'], 'rb') as fid:
         encoded_image_data = fid.read()
     height = int(sample['height'])

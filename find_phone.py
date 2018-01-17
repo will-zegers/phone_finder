@@ -13,7 +13,10 @@ def main():
 
     with detection_graph.as_default():
         with tf.Session(graph=detection_graph) as sess:
-            print(util.detect_phone_center(image_path, detection_graph, sess))
+            center = util.detect_phone_center(image_path, detection_graph, sess)
+            print('-'*24)
+            print('{} {}'.format(center[0], center[1]))
+            print('-'*24)
 
 
 if __name__ == '__main__':
