@@ -5,6 +5,7 @@ import platform
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+import model_exporter
 from sklearn.model_selection import KFold
 
 """
@@ -59,10 +60,11 @@ def create_record_df(img_dir, box_size=0.06):
     df = pd.DataFrame(index=[i for i in range(len(data))], columns=columns)
     for i, (filename, center) in enumerate(zip(data, labels)):
         img = cv2.imread(os.path.join(img_dir, filename))
-        h, w, _ = img.shape
-        pt1 = (round(center[0] - box_size, 4), round(center[1] - box_size, 4))
-        pt2 = (round(center[0] + box_size, 4), round(center[1] + box_size, 4))
-        df.iloc[i] = np.array([h, w, filename, pt1[0], pt1[1], pt2[0], pt2[1], 'phone'])
+        xmin = round(center[0] - box_size, 4) if center[0] > box_size else 0
+        ymin = round(center[1] - box_size, 4) if center[0] > box_size else 0
+        xmax = round(center[0] + box_size, 4) if center[0] + box_size <= 1 else 1
+        ymax = round(center[1] + box_size, 4) if center[0] + box_size <= 1 else 1
+        df.iloc[i] = np.array([img.shape[0], img.shape[1], filename, xmin, ymin, xmax, ymax, 'phone'])
     return df
 
 
@@ -77,9 +79,9 @@ def create_label_map(names, filename):
     """
     pbtxt = open('./data/{}.pbtxt'.format(filename), 'w')
     for class_id, name in enumerate(names):
-        pbtxt.write('{\n')
-        pbtxt.write('\tid: {}\n'.format(class_id))
-        pbtxt.write('\tname: {}\n'.format(name))
+        pbtxt.write('item {\n')
+        pbtxt.write('\tid: {}\n'.format(class_id+1))
+        pbtxt.write('\tname: \"{}\"\n'.format(name))
         pbtxt.write('}\n')
 
 
@@ -154,7 +156,8 @@ def write_tf_records(img_dir, data, n_splits=5, random_state=451):
 
 
 def main(_):
-    img_dir = './find_phone/'
+#    img_dir = './find_phone/'
+    img_dir = sys.argv[1]
     create_label_map(['Phone'], 'phone_finder')
     data = create_record_df(img_dir)
     write_tf_records(img_dir, data)
@@ -163,6 +166,7 @@ def main(_):
     od_train.FLAGS.pipeline_config_path = 'data/pipeline.config'
     od_train.main(0)
 
+    model_exporter.export()
 
 if __name__ == '__main__':
     tf.app.run()

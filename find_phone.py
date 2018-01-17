@@ -17,13 +17,7 @@ if not os.path.exists('./object_detection/protos/eval_pb2.py'):
 from object_detection.utils import label_map_util
 
 
-def load_image_into_numpy_array(image):
-    (im_width, im_height) = image.size
-    return np.array(image.getdata()).reshape(
-        (im_height, im_width, 3)).astype(np.uint8)
-
-
-GRAPH_NAME = 'frozen_inference_graph.pb'
+GRAPH_NAME = 'phone_detection_graph/frozen_inference_graph.pb'
 PATH_TO_LABELS = os.path.join('data', 'phone_finder.pbtxt')
 
 image_path = sys.argv[1]
