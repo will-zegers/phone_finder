@@ -5,7 +5,7 @@ import platform
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-import model_exporter
+import phone_finder_util
 from sklearn.model_selection import KFold
 
 """
@@ -166,7 +166,7 @@ def main(_):
     od_train.FLAGS.pipeline_config_path = 'data/pipeline.config'
     od_train.main(0)
 
-    model_exporter.export()
+    phone_finder_util.export()
 
 if __name__ == '__main__':
     tf.app.run()
