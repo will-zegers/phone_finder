@@ -1,46 +1,16 @@
 import os
 import cv2
 import sys
-import platform
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-import phone_finder_util
 from sklearn.model_selection import KFold
 
-"""
-For the object detection API, we need to include the path of the local installation of the
-library and a helper TF "slim" library, and also make sure the .proto files have been
-compiled in a way that can be used by Python
-"""
-sys.path.append(os.getcwd())
-sys.path.append(os.getcwd() + '/slim')
-if not os.path.exists('./object_detection/protos/eval_pb2.py'):
-    print('Compiling proto files...')
-    if platform.system() == 'Linux':
-        if platform.architecture()[0] == '64bit':
-            os.system('./protoc/bin/protoc object_detection/protos/*.proto --python_out=.')
+import init
+import util
 
 from object_detection import train as od_train
 from object_detection.utils import dataset_util
-
-
-def load_training_data(dir_path='./find_phone/'):
-    """
-    :param dir_path: Location of the directory containing the training examples and labels
-    :return: Two arrays, one containing the strings of file name (data), and the other containing
-    the corresponding labels the indicate the center XY coordinate of the phone
-    """
-    data = np.empty(0)
-    labels = np.empty((0, 2))
-    with open(os.path.join(dir_path, 'labels.txt')) as f:
-        line = f.readline()
-        while line:
-            label = line.split()
-            data = np.append(data, label[0])
-            labels = np.vstack((labels, (float(label[1]), float(label[2]))))
-            line = f.readline()
-    return data, labels
 
 
 def create_record_df(img_dir, box_size=0.06):
@@ -54,12 +24,12 @@ def create_record_df(img_dir, box_size=0.06):
     image in the training set, plus the normalized points of the box that contains the phone image
     (represented by its top right corner and bottom left)
     """
-    data, labels = load_training_data(img_dir)
+    data, labels = util.load_data(img_dir)
 
     columns = ['height', 'width', 'filename', 'xmin', 'ymin', 'xmax', 'ymax', 'class']
     df = pd.DataFrame(index=[i for i in range(len(data))], columns=columns)
     for i, (filename, center) in enumerate(zip(data, labels)):
-        img = cv2.imread(os.path.join(img_dir, filename))
+        img = cv2.imread(filename)
         xmin = round(center[0] - box_size, 4) if center[0] > box_size else 0
         ymin = round(center[1] - box_size, 4) if center[0] > box_size else 0
         xmax = round(center[0] + box_size, 4) if center[0] + box_size <= 1 else 1
@@ -96,7 +66,8 @@ def create_tf_record(img_dir, sample):
     :return: An TF record object
     """
 
-    with tf.gfile.GFile(os.path.join(img_dir, sample['filename']), 'rb') as fid:
+    print(sample['filename'])
+    with tf.gfile.GFile(sample['filename'], 'rb') as fid:
         encoded_image_data = fid.read()
     height = int(sample['height'])
     width = int(sample['width'])
@@ -154,9 +125,7 @@ def write_tf_records(img_dir, data, n_splits=5, random_state=451):
     valid_writer.close()
 
 
-
 def main(_):
-#    img_dir = './find_phone/'
     img_dir = sys.argv[1]
     create_label_map(['Phone'], 'phone_finder')
     data = create_record_df(img_dir)
@@ -166,7 +135,8 @@ def main(_):
     od_train.FLAGS.pipeline_config_path = 'data/pipeline.config'
     od_train.main(0)
 
-    phone_finder_util.export()
+    util.export_graph()
+
 
 if __name__ == '__main__':
     tf.app.run()
